@@ -1,61 +1,47 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+// SOLMAR BAY — shared tuning constants and the seeded random number
+// generator. Every number that shapes how the city feels lives here so the
+// rest of the game can stay about behaviour, not magic numbers.
+export const WORLD = 2400; // world is WORLD x WORLD pixels
+export const ROAD_SPACING = 300;
+export const ROAD_WIDTH = 64;
+export const VIEW_W = 1280;
+export const VIEW_H = 720;
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
+export const PLAYER_WALK = 185;
+export const PLAYER_SPRINT = 305;
+export const PLAYER_RADIUS = 13;
+export const CAR_MAX_SPEED = 540;
+export const CAR_ACCEL = 420;
+export const CAR_BRAKE = 620;
+export const CAR_REVERSE_MAX = 190;
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+export const MISSION_REWARDS = [500, 800, 1200, 1500, 5000];
+export const START_MONEY = 250;
+export const START_AMMO = 24;
 
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
-};
+// Mulberry32 — small, fast, deterministic. The city, traffic and staged
+// screenshots all draw from seeds built on this, so the same seed always
+// builds the same Solmar Bay.
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
-export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+export function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+export function range(rng, lo, hi) { return lo + rng() * (hi - lo); }
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+export function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
+// Shortest signed turn from angle a toward angle b, in (-PI, PI].
+export function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+export function lerp(a, b, t) { return a + (b - a) * t; }

@@ -1,79 +1,117 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// SOLMAR BAY — deterministic staged scenes behind ?shot=cover|street|
+// drive|mission (with &seed=N). Each scene builds the real game from a
+// fixed seed, places the player, traffic and police by hand, and freezes the
+// camera, so the same URL always renders the same frame for screenshots.
+import { WORLD } from './config.js';
+import { setWanted } from './police.js';
+import { startMission } from './missions.js';
+import { makeCar } from './vehicles.js';
+import { mulberry32 } from './config.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
 export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+  const rng = mulberry32(world.seed + 101);
+  const player = world.player;
+  const cam = world.camera;
+  // Reset the dynamic bits to a clean staged state.
+  world.wanted.stars = 0; world.wanted.heat = 0;
+  world.police.cars = []; world.police.officers = [];
+  world.bullets = []; world.particles = [];
+  world.missions.active = null;
+  world.missions.bannerTimer = 0;
+  world.missions.toastTimer = 0;
+  world.sunset = name === 'cover' || name === 'mission';
+  world.time = name === 'cover' ? 12 : 4;
+
+  if (name === 'cover') {
+    // Police chase in a car at wanted 3, minimap + mission HUD visible.
+    const car = world.cars.find((c) => c.parked) || world.cars[0];
+    car.parked = false; car.stolen = true; car.health = 82;
+    player.inCar = car; player.x = 1050; player.y = 1050; car.x = 1050; car.y = 1050;
+    car.angle = Math.PI / 2; car.speed = 380;
+    setWanted(world.wanted, 3);
+    for (let i = 0; i < 3; i += 1) {
+      const pc = makeCar(rng, 1050 + (i - 1) * 70, 1050 - 150 - i * 60, Math.PI / 2, { police: true, color: '#1c2f4a', name: 'SBPD Cruiser' });
+      pc.speed = 300;
+      world.police.cars.push(pc);
+    }
+    // Three jobs already done, so the next job is mission 4, The Getaway.
+    world.missions.done = 3;
+    startMission(world.missions, world, rng);
+    world.missions.banner = 'The Getaway';
+    world.missions.bannerTimer = 99;
+    world.missions.active.timer = 74;
+    cam.x = 1050 - 640; cam.y = 1050 - 360;
+  } else if (name === 'street') {
+    // On foot downtown, traffic + pedestrians around.
+    player.inCar = null; player.x = 750; player.y = 750; player.angle = 0.4;
+    world.money = 1250;
+    cam.x = 750 - 640; cam.y = 750 - 360;
+  } else if (name === 'drive') {
+    // Driving south on the coastal avenue (x=1950), beach + ocean on the right.
+    const car = world.cars.find((c) => c.parked) || world.cars[0];
+    car.parked = false; car.health = 96;
+    player.inCar = car; player.x = 1950; player.y = 1050; car.x = 1950; car.y = 1050;
+    car.angle = Math.PI / 2; car.speed = 420;
+    world.money = 2100;
+    cam.x = 1950 - 640; cam.y = 1050 - 360;
+  } else if (name === 'mission') {
+    // Mission 3 in progress: dockside shootout, objective + HUD visible.
+    player.inCar = null; player.x = 300; player.y = 1900; player.angle = -0.5;
+    player.ammo = 18;
+    // Two jobs already done, so the next job is mission 3, Dockside Trouble.
+    world.missions.done = 2;
+    startMission(world.missions, world, rng);
+    // Jump straight to the shootout step with rivals present.
+    world.missions.active.step = 1;
+    world.missions.active.spawned = true;
+    importRivals(world, rng);
+    world.missions.banner = 'Dockside Trouble';
+    world.missions.bannerTimer = 99;
+    world.money = 1750;
+    cam.x = 300 - 640; cam.y = 1900 - 360;
+  } else {
+    // Unknown shot name: the street scene is the safe default.
+    player.inCar = null; player.x = 750; player.y = 750;
+    cam.x = 750 - 640; cam.y = 750 - 360;
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  // Clamp the camera inside the world and settle traffic near it.
+  cam.x = Math.max(0, Math.min(WORLD - 1280, cam.x));
+  cam.y = Math.max(0, Math.min(WORLD - 720, cam.y));
+  // Nudge a few traffic cars into the frame so the street is alive.
+  let placed = 0;
+  for (const car of world.cars) {
+    if (car === player.inCar || car.police) continue;
+    if (placed < 5 && (car.x < cam.x - 50 || car.x > cam.x + 1330 || car.y < cam.y - 50 || car.y > cam.y + 770)) {
+      const spots = [
+        { x: cam.x + 220, y: cam.y + 330, a: 0 },
+        { x: cam.x + 700, y: cam.y + 330, a: 0 },
+        { x: cam.x + 1050, y: cam.y + 330, a: Math.PI },
+        { x: cam.x + 460, y: cam.y + 560, a: Math.PI / 2 },
+        { x: cam.x + 900, y: cam.y + 120, a: -Math.PI / 2 },
+      ];
+      const s = spots[placed];
+      car.x = s.x; car.y = s.y; car.angle = s.a; car.parked = false; car.traffic = true; car.speed = 120;
+      placed += 1;
+    }
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  world.mode = 'play';
+  return { screen: 'play' };
+}
+
+function importRivals(world, rng) {
+  // Local import avoided (static imports only at top): rivals are built
+  // here with the same shape makeRival produces, via the missions module's
+  // own helper through the world's pedestrian list.
+  const docks = { x: 210, y: 1980 };
+  for (let i = 0; i < 4; i += 1) {
+    const r = {
+      x: docks.x + (i - 1.5) * 90, y: docks.y - 60 + (i % 2) * 120,
+      angle: Math.PI, speed: 95, targetX: docks.x, targetY: docks.y,
+      waitTimer: 0, fleeing: false, fleeTimer: 0,
+      color: '#e8b48a', shirt: '#7a1f1f', name: 'Viper',
+      walkPhase: i, radius: 11, rival: true, health: 60, shootTimer: 1, dead: false,
+    };
+    world.peds.push(r);
+    world.missions.active.rivals.push(r);
+  }
 }
